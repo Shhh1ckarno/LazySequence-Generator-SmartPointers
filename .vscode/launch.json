@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "LLDB Launch Current File",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${fileDirname}/${fileBasenameNoExtension}",
+            "args": [],
+            "cwd": "${fileDirname}",
+            "stopOnEntry": false,
+            "preLaunchTask": "C/C++: g++ сборка активного файла",
+            "terminal": "integrated"
+        }
+    ]
+}
