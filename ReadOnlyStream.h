@@ -1,145 +1,103 @@
 #pragma once
 
-#include <cstddef>
-#include <utility>
-#include <new>
-#include <typeinfo>
-#include <cassert>
-#include <iostream>
-#include <istream>
+#include <string>
 #include <functional>
 #include <stdexcept>
-#include <optional>
-#include <string>
+#include <fstream>
+#include <sstream>
+#include <iostream>
 
-#include "LazySequence.h"
-#include "SmartPointer.h"
+#include "DynamicArray.h" 
+#include "SmartPointer.h" 
+
+
+class EndOfStream : public std::out_of_range {
+public:
+    EndOfStream() : std::out_of_range("EndOfStream: attempt to read beyond stream") {}
+};
+
+
+template <class T>
+using Deserializer = std::function<T(const std::string&)>;
+
 
 template <class T>
 class ReadOnlyStream {
-public:
-    explicit ReadOnlyStream(Sequence<T>* seq)
-        : seqSource(make_shared< CoreLazySequence<T> >(seq)),
-          lazySource(),
-          inSource(nullptr),
-          deserializer(nullptr),
-          pos(0),
-          opened(true),
-          stringBuf(),
-          stringPos(0)
-    {}
+private:
+    struct IStreamImpl {
+        virtual ~IStreamImpl() = default;
+        virtual T Read() = 0;
+        virtual bool IsEOS() const = 0;
+        virtual bool CanSeek() const = 0;
+        virtual int GetPos() const = 0; 
+        virtual void Seek(int index) = 0; 
+        virtual void Reset() = 0; 
+    };
 
-    explicit ReadOnlyStream(LazySequence<T>* lazy)
-        : seqSource(),
-          lazySource(make_unique< LazySequence<T> >(*lazy)),
-          inSource(nullptr),
-          deserializer(nullptr),
-          pos(0),
-          opened(true),
-          stringBuf(),
-          stringPos(0)
-    {}
-
-    ReadOnlyStream(std::istream* in, std::function<T(const std::string&)> deserial)
-        : seqSource(),
-          lazySource(),
-          inSource(in),
-          deserializer(deserial),
-          pos(0),
-          opened(true),
-          stringBuf(),
-          stringPos(0)
-    {
-        if (!inSource) throw std::invalid_argument("ReadOnlyStream: null istream");
-    }
-
-    ReadOnlyStream(const std::string& s, std::function<T(const std::string&)> deserial)
-        : seqSource(),
-          lazySource(),
-          inSource(nullptr),
-          deserializer(deserial),
-          pos(0),
-          opened(false),
-          stringBuf(s),
-          stringPos(0)
-    {}
-
-    bool IsEndOfStream() const {
-        if (inSource) return inSource->eof();
-        if (!stringBuf.empty()) return stringPos >= stringBuf.size();
-        if (lazySource) {
-            Cardinal l = lazySource->GetLength();
-            if (l.IsOmega()) return false;
-            return pos >= l.GetValue();
+    class ArrayImpl : public IStreamImpl {
+        const DynamicArray<T>* array_ptr; 
+        int pos; 
+    public:
+        ArrayImpl(const DynamicArray<T>* arr) : array_ptr(arr), pos(0) {
+            if (!array_ptr) throw std::invalid_argument("ReadOnlyStream: DynamicArray is null");
         }
-        if (seqSource) {
-            Cardinal l = seqSource->GetLength();
-            if (l.IsOmega()) return false;
-            return pos >= l.GetValue();
+        T Read() override {
+            if (IsEOS()) throw EndOfStream();
+            return array_ptr->Get(pos++);
         }
-        return true;
-    }
+        bool IsEOS() const override {
+            return pos >= array_ptr->GetSize(); 
+        }
+        bool CanSeek() const override { return true; }
+        int GetPos() const override { return pos; }
+        void Seek(int index) override {
+            if (index > array_ptr->GetSize()) {
+                throw std::out_of_range("Seek index out of bounds");
+            }
+            pos = index;
+        }
+        void Reset() override { pos = 0; }
+    };
 
-    T Read() {
-        if (!opened) Open();
-        if (IsEndOfStream()) throw std::out_of_range("EndOfStream");
-        if (inSource) {
+    class IoStreamImpl : public IStreamImpl {
+        std::istream* stream;
+        UniquePtr<std::istream> ownedStream; 
+        Deserializer<T> deserializer;
+        int pos; 
+        
+    public:
+        IoStreamImpl(std::istream* strm, Deserializer<T> deser) 
+            : stream(strm), deserializer(deser), pos(0) {
+            if (!stream) throw std::invalid_argument("Stream is null");
+        }
+        
+        T Read() override {
+            if (IsEOS()) throw EndOfStream();
             std::string line;
-            if (!std::getline(*inSource, line)) throw std::out_of_range("EndOfStream");
-            if (!deserializer) throw std::runtime_error("No deserializer");
-            ++pos;
+            if (!std::getline(*stream, line)) {
+                throw EndOfStream();
+            }
+            pos++;
             return deserializer(line);
         }
-        if (!stringBuf.empty()) {
-            if (!deserializer) throw std::runtime_error("No deserializer");
-            size_t start = stringPos;
-            size_t next = stringBuf.find('\n', start);
-            std::string token;
-            if (next == std::string::npos) {
-                token = stringBuf.substr(start);
-                stringPos = stringBuf.size();
-            } else {
-                token = stringBuf.substr(start, next - start);
-                stringPos = next + 1;
-            }
-            ++pos;
-            return deserializer(token);
-        }
-        if (lazySource) {
-            T v = lazySource->Get(pos);
-            ++pos;
-            return v;
-        }
-        if (seqSource) {
-            T v = seqSource->Get(pos);
-            ++pos;
-            return v;
-        }
-        throw std::runtime_error("No source");
+        bool IsEOS() const override { return stream->eof(); }
+        bool CanSeek() const override { return false; }
+        int GetPos() const override { return pos; }
+        void Seek(int index) override { throw std::logic_error("Seek not supported for generic Input Streams"); }
+        void Reset() override { stream->clear(); pos = 0; }
+    };
+
+    UniquePtr<IStreamImpl> impl; 
+    bool isOpen;
+
+public:
+    explicit ReadOnlyStream(const DynamicArray<T>* arr) 
+        : impl(new ArrayImpl(arr)), isOpen(true) {}
+    ReadOnlyStream(std::istream* stream, Deserializer<T> deser)
+        : impl(new IoStreamImpl(stream, deser)), isOpen(true) {}
+    T Read() {
+        if (!isOpen) throw std::logic_error("Stream is closed");
+        return impl->Read();
     }
-
-    size_t GetPosition() const { return pos; }
-    bool IsCanSeek() const { return static_cast<bool>(seqSource) || static_cast<bool>(lazySource); }
-    size_t Seek(size_t index) {
-        if (!IsCanSeek()) throw std::runtime_error("Seek not supported");
-        pos = index;
-        if (lazySource && pos > lazySource->GetMaterializedCount() && lazySource->HasGenerator()) {
-            // do not materialize here — caller can call Read which will materialize as needed
-        }
-        return pos;
-    }
-    bool IsCanGoBack() const { return IsCanSeek(); }
-
-    void Open() { opened = true; if (!stringBuf.empty()) stringPos = 0; }
-    void Close() { opened = false; }
-
-private:
-    SharedPtr< CoreLazySequence<T> > seqSource;
-    UniquePtr< LazySequence<T> > lazySource;
-    std::istream* inSource;
-    std::function<T(const std::string&)> deserializer;
-    size_t pos;
-    bool opened;
-    std::string stringBuf;
-    size_t stringPos;
+    bool IsEndOfStream() const { return !isOpen || impl->IsEOS(); }
 };

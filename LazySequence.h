@@ -10,7 +10,6 @@
 #include <stdexcept>
 #include <optional>
 #include <string>
-
 #include "ArraySequence.h"
 #include "DynamicArray.h"
 #include "SmartPointer.h"
@@ -18,6 +17,7 @@
 #include "Generator.h"
 #include "MutableArraySequence.h"
 #include "ImmutableArraySequence.h"
+
 
 template <class T> class LazySequenceBase;
 template <class T> class CoreLazySequence;
@@ -45,31 +45,30 @@ public:
 
     template <class R>
     SharedPtr< LazySequenceBase<R> > Map(R (*f)(T)) {
-        return make_shared< MapLazySequence<T,R> >( this->Clone(), f );
+        return MakeShared< MapLazySequence<T,R> >( this->Clone(), f );
     }
 
     SharedPtr< LazySequenceBase<T> > Where(bool (*pred)(T)) {
-        return make_shared< WhereLazySequence<T> >( this->Clone(), pred );
+        return MakeShared< WhereLazySequence<T> >( this->Clone(), pred );
     }
 
     template<class U>
     SharedPtr< LazySequenceBase< std::pair<T,U> > > Zip(const SharedPtr< LazySequenceBase<U> >& other) {
-        return make_shared< ZipLazySequence<T,U> >( this->Clone(), other );
+        return MakeShared< ZipLazySequence<T,U> >( this->Clone(), other );
     }
-
 };
 
 template <class T>
 class CoreLazySequence : public LazySequenceBase<T> {
 public:
     CoreLazySequence() {
-        materialised = make_shared< MutableArraySequence<T> >();
+        materialised = MakeShared< MutableArraySequence<T> >();
         rule = nullptr;
         wrapperRule = nullptr;
     }
 
     CoreLazySequence(T* items, int count) {
-        materialised = make_shared< MutableArraySequence<T> >();
+        materialised = MakeShared< MutableArraySequence<T> >();
         for (int i = 0; i < count; ++i) materialised->Append(items[i]);
         rule = nullptr;
         wrapperRule = nullptr;
@@ -78,15 +77,15 @@ public:
     CoreLazySequence(Sequence<T>* seq) {
         ArraySequence<T>* arr = dynamic_cast< ArraySequence<T>* >(seq);
         if (!arr) throw std::runtime_error("CoreLazySequence(Sequence*): only ArraySequence derived supported");
-        materialised = make_shared< MutableArraySequence<T> >();
-        size_t n = arr->GetLength();
+        materialised = MakeShared< MutableArraySequence<T> >();
+        size_t n = arr->GetLength(); 
         for (size_t i = 0; i < n; ++i) materialised->Append(arr->Get(i));
         rule = nullptr;
         wrapperRule = nullptr;
     }
 
     CoreLazySequence(T (*ruleFunc)(Sequence<T>*), Sequence<T>* seedSeq) {
-        materialised = make_shared< MutableArraySequence<T> >();
+        materialised = MakeShared< MutableArraySequence<T> >();
         if (seedSeq) {
             ArraySequence<T>* arr = dynamic_cast< ArraySequence<T>* >(seedSeq);
             if (!arr) throw std::runtime_error("CoreLazySequence(rule, seq): only ArraySequence derived supported");
@@ -98,7 +97,7 @@ public:
     }
 
     CoreLazySequence(std::function<T(Sequence<T>*)> ruleFunc, Sequence<T>* seedSeq) {
-        materialised = make_shared< MutableArraySequence<T> >();
+        materialised = MakeShared< MutableArraySequence<T> >();
         if (seedSeq) {
             ArraySequence<T>* arr = dynamic_cast< ArraySequence<T>* >(seedSeq);
             if (!arr) throw std::runtime_error("CoreLazySequence(std::function, seq): only ArraySequence derived supported");
@@ -108,10 +107,10 @@ public:
         wrapperRule = ruleFunc;
         rule = nullptr;
     }
-
+    
     CoreLazySequence(const CoreLazySequence<T>& other) {
-        materialised = make_shared< MutableArraySequence<T> >();
-        size_t n = other.materialised->GetLength();
+        materialised = MakeShared< MutableArraySequence<T> >();
+        size_t n = other.materialised->GetLength(); 
         for (size_t i = 0; i < n; ++i) materialised->Append(other.materialised->Get(i));
         rule = other.rule;
         wrapperRule = other.wrapperRule;
@@ -119,53 +118,28 @@ public:
     }
 
     SharedPtr< LazySequenceBase<T> > Clone() const override {
-        return make_shared< CoreLazySequence<T> >(*this);
+        return MakeShared< CoreLazySequence<T> >(*this);
     }
 
     void SetGenerator(T (*ruleFunc)(Sequence<T>*)) { rule = ruleFunc; }
     void SetGenerator(std::function<T(Sequence<T>*)> ruleFunc) { wrapperRule = ruleFunc; }
 
-    T GetFirst() {
-        if (GetMaterializedCount() == 0 && !HasAnyGenerator()) throw std::out_of_range("IndexOutOfRange: empty");
-        return Get(0);
-    }
+    T Get(size_t index) override {
+        size_t n = materialised->GetLength();
+        if (index < n) return materialised->Get(index);
 
-    T GetLast() {
-        Cardinal len = GetLength();
-        if (len.IsOmega()) throw std::runtime_error("GetLast on infinite sequence");
-        size_t n = len.GetValue();
-        if (n == 0) throw std::out_of_range("IndexOutOfRange: empty");
-        return Get(n - 1);
-    }
-
-T Get(size_t index) override {
-    size_t n = materialised->GetLength();
-    if (index < n) return materialised->Get(index);
-
-    // Проходим через дочерние последовательности
-    size_t offset = n;
-    for (int i = 0; i < children.GetSize(); ++i) {
-        Cardinal childLen = children.Get(i)->GetLength();
-        if (!childLen.IsOmega() && index < offset + childLen.GetValue())
-            return children.Get(i)->Get(index - offset);
-        if (childLen.IsOmega()) {
-            // бесконечная последовательность
-            return children.Get(i)->Get(index - offset);
+        size_t offset = n;
+        for (int i = 0; i < children.GetSize(); ++i) {
+            Cardinal childLen = children.Get(i)->GetLength();
+            if (!childLen.IsOmega() && index < offset + childLen.GetValue())
+                return children.Get(i)->Get(index - offset);
+            if (childLen.IsOmega()) {
+                return children.Get(i)->Get(index - offset);
+            }
+            offset += childLen.GetValue();
         }
-        offset += childLen.GetValue();
-    }
 
-    throw std::out_of_range("CoreLazySequence::Get: index beyond materialised and children");
-}
-    SharedPtr< LazySequenceBase<T> > GetSubsequence(int startIndex, int endIndex) {
-        if (startIndex < 0 || endIndex < startIndex) throw std::out_of_range("GetSubsequence: invalid indices");
-        for (int i = startIndex; i <= endIndex; ++i) Get((size_t)i);
-        int len = endIndex - startIndex + 1;
-        T* buffer = new T[len];
-        for (int i = 0; i < len; ++i) buffer[i] = Get((size_t)(startIndex + i));
-        SharedPtr< CoreLazySequence<T> > out = make_shared< CoreLazySequence<T> >(buffer, len);
-        delete [] buffer;
-        return out;
+        throw std::out_of_range("CoreLazySequence::Get: index beyond materialised and children");
     }
 
     Cardinal GetLength() const override {
@@ -185,25 +159,25 @@ T Get(size_t index) override {
     size_t GetMaterializedCount() const override { return materialised->GetLength(); }
 
     SharedPtr< LazySequenceBase<T> > Append(const T& item) override {
-        return make_shared< AppendedLazySequence<T> >( this->Clone(), item );
+        return MakeShared< AppendedLazySequence<T> >( this->Clone(), item );
     }
     SharedPtr< LazySequenceBase<T> > Prepend(const T& item) override {
-        return make_shared< PrependedLazySequence<T> >( this->Clone(), item );
+        return MakeShared< PrependedLazySequence<T> >( this->Clone(), item );
     }
     SharedPtr< LazySequenceBase<T> > InsertAt(const T& item, size_t index) override {
-        return make_shared< InsertedAtLazySequence<T> >( this->Clone(), item, index );
+        return MakeShared< InsertedAtLazySequence<T> >( this->Clone(), item, index );
     }
 
     SharedPtr< ArraySequence<T> > GetMaterialisedArray() { return materialised; }
     void AddChild(const SharedPtr< LazySequenceBase<T> >& child) { children.Append(child); }
 
-bool HasAnyGenerator() const {
-    if (rule || wrapperRule) return true;
-    for (int i = 0; i < children.GetSize(); ++i) {
-        if (children.Get(i)->GetLength().IsOmega()) return true;
+    bool HasAnyGenerator() const {
+        if (rule || wrapperRule) return true;
+        for (int i = 0; i < children.GetSize(); ++i) {
+            if (children.Get(i)->GetLength().IsOmega()) return true;
+        }
+        return false;
     }
-    return false;
-}
 
     T (*GetRawRule())(Sequence<T>*) { return rule; }
     std::function<T(Sequence<T>*)> GetWrapperRule() const { return wrapperRule; }
@@ -215,7 +189,6 @@ private:
     DynamicArray< SharedPtr< LazySequenceBase<T> > > children;
 };
 
-
 template <class T>
 class AppendedLazySequence : public LazySequenceBase<T> {
 public:
@@ -223,7 +196,7 @@ public:
     AppendedLazySequence(const AppendedLazySequence& other) : base(other.base), item(other.item) {}
 
     SharedPtr< LazySequenceBase<T> > Clone() const override {
-        return ::make_shared< AppendedLazySequence<T> >(*this);
+        return MakeShared< AppendedLazySequence<T> >(*this);
     }
 
     T Get(size_t index) override {
@@ -246,15 +219,14 @@ public:
 
     size_t GetMaterializedCount() const override { return base->GetMaterializedCount() + 1; }
 
-    SharedPtr< LazySequenceBase<T> > Append(const T& v) override { return ::make_shared< AppendedLazySequence<T> >( this->Clone(), v ); }
-    SharedPtr< LazySequenceBase<T> > Prepend(const T& v) override { return ::make_shared< PrependedLazySequence<T> >( this->Clone(), v ); }
-    SharedPtr< LazySequenceBase<T> > InsertAt(const T& v, size_t idx) override { return ::make_shared< InsertedAtLazySequence<T> >( this->Clone(), v, idx ); }
+    SharedPtr< LazySequenceBase<T> > Append(const T& v) override { return MakeShared< AppendedLazySequence<T> >( this->Clone(), v ); }
+    SharedPtr< LazySequenceBase<T> > Prepend(const T& v) override { return MakeShared< PrependedLazySequence<T> >( this->Clone(), v ); }
+    SharedPtr< LazySequenceBase<T> > InsertAt(const T& v, size_t idx) override { return MakeShared< InsertedAtLazySequence<T> >( this->Clone(), v, idx ); }
 
 private:
     SharedPtr< LazySequenceBase<T> > base;
     T item;
 };
-
 
 template <class T>
 class PrependedLazySequence : public LazySequenceBase<T> {
@@ -263,7 +235,7 @@ public:
     PrependedLazySequence(const PrependedLazySequence& other) : base(other.base), item(other.item) {}
 
     SharedPtr< LazySequenceBase<T> > Clone() const override {
-        return ::make_shared< PrependedLazySequence<T> >(*this);
+        return MakeShared< PrependedLazySequence<T> >(*this);
     }
 
     T Get(size_t index) override {
@@ -279,15 +251,14 @@ public:
 
     size_t GetMaterializedCount() const override { return base->GetMaterializedCount() + 1; }
 
-    SharedPtr< LazySequenceBase<T> > Append(const T& v) override { return ::make_shared< AppendedLazySequence<T> >( this->Clone(), v ); }
-    SharedPtr< LazySequenceBase<T> > Prepend(const T& v) override { return ::make_shared< PrependedLazySequence<T> >( this->Clone(), v ); }
-    SharedPtr< LazySequenceBase<T> > InsertAt(const T& v, size_t idx) override { return ::make_shared< InsertedAtLazySequence<T> >( this->Clone(), v, idx ); }
+    SharedPtr< LazySequenceBase<T> > Append(const T& v) override { return MakeShared< AppendedLazySequence<T> >( this->Clone(), v ); }
+    SharedPtr< LazySequenceBase<T> > Prepend(const T& v) override { return MakeShared< PrependedLazySequence<T> >( this->Clone(), v ); }
+    SharedPtr< LazySequenceBase<T> > InsertAt(const T& v, size_t idx) override { return MakeShared< InsertedAtLazySequence<T> >( this->Clone(), v, idx ); }
 
 private:
     SharedPtr< LazySequenceBase<T> > base;
     T item;
 };
-
 
 template <class T>
 class InsertedAtLazySequence : public LazySequenceBase<T> {
@@ -296,7 +267,7 @@ public:
     InsertedAtLazySequence(const InsertedAtLazySequence& other) : base(other.base), item(other.item), idx(other.idx) {}
 
     SharedPtr< LazySequenceBase<T> > Clone() const override {
-        return ::make_shared< InsertedAtLazySequence<T> >(*this);
+        return MakeShared< InsertedAtLazySequence<T> >(*this);
     }
 
     T Get(size_t index) override {
@@ -313,16 +284,15 @@ public:
 
     size_t GetMaterializedCount() const override { return base->GetMaterializedCount() + 1; }
 
-    SharedPtr< LazySequenceBase<T> > Append(const T& v) override { return ::make_shared< AppendedLazySequence<T> >( this->Clone(), v ); }
-    SharedPtr< LazySequenceBase<T> > Prepend(const T& v) override { return ::make_shared< PrependedLazySequence<T> >( this->Clone(), v ); }
-    SharedPtr< LazySequenceBase<T> > InsertAt(const T& v, size_t index) override { return ::make_shared< InsertedAtLazySequence<T> >( this->Clone(), v, index ); }
+    SharedPtr< LazySequenceBase<T> > Append(const T& v) override { return MakeShared< AppendedLazySequence<T> >( this->Clone(), v ); }
+    SharedPtr< LazySequenceBase<T> > Prepend(const T& v) override { return MakeShared< PrependedLazySequence<T> >( this->Clone(), v ); }
+    SharedPtr< LazySequenceBase<T> > InsertAt(const T& v, size_t index) override { return MakeShared< InsertedAtLazySequence<T> >( this->Clone(), v, index ); }
 
 private:
     SharedPtr< LazySequenceBase<T> > base;
     T item;
     size_t idx;
 };
-
 
 template <class T, class R>
 class MapLazySequence : public LazySequenceBase<R> {
@@ -331,7 +301,7 @@ public:
     MapLazySequence(const MapLazySequence& other) : base(other.base), func(other.func), cache(other.cache) {}
 
     SharedPtr< LazySequenceBase<R> > Clone() const override {
-        return make_shared< MapLazySequence<T,R> >(*this);
+        return MakeShared< MapLazySequence<T,R> >(*this);
     }
 
     R Get(size_t index) override {
@@ -345,16 +315,15 @@ public:
     Cardinal GetLength() const override { return base->GetLength(); }
     size_t GetMaterializedCount() const override { return (size_t)cache.GetSize(); }
 
-    SharedPtr< LazySequenceBase<R> > Append(const R& v) override { return make_shared< AppendedLazySequence<R> >( this->Clone(), v ); }
-    SharedPtr< LazySequenceBase<R> > Prepend(const R& v) override { return make_shared< PrependedLazySequence<R> >( this->Clone(), v ); }
-    SharedPtr< LazySequenceBase<R> > InsertAt(const R& v, size_t idx) override { return make_shared< InsertedAtLazySequence<R> >( this->Clone(), v, idx ); }
+    SharedPtr< LazySequenceBase<R> > Append(const R& v) override { return MakeShared< AppendedLazySequence<R> >( this->Clone(), v ); }
+    SharedPtr< LazySequenceBase<R> > Prepend(const R& v) override { return MakeShared< PrependedLazySequence<R> >( this->Clone(), v ); }
+    SharedPtr< LazySequenceBase<R> > InsertAt(const R& v, size_t idx) override { return MakeShared< InsertedAtLazySequence<R> >( this->Clone(), v, idx ); }
 
 private:
     SharedPtr< LazySequenceBase<T> > base;
     R (*func)(T);
     DynamicArray<R> cache;
 };
-
 
 template <class T>
 class WhereLazySequence : public LazySequenceBase<T> {
@@ -363,7 +332,7 @@ public:
     WhereLazySequence(const WhereLazySequence& other) : base(other.base), pred(other.pred), matches(other.matches) {}
 
     SharedPtr< LazySequenceBase<T> > Clone() const override {
-        return make_shared< WhereLazySequence<T> >(*this);
+        return MakeShared< WhereLazySequence<T> >(*this);
     }
 
     T Get(size_t index) override {
@@ -383,9 +352,9 @@ public:
 
     size_t GetMaterializedCount() const override { return (size_t)matches.GetSize(); }
 
-    SharedPtr< LazySequenceBase<T> > Append(const T& v) override { return make_shared< AppendedLazySequence<T> >( this->Clone(), v ); }
-    SharedPtr< LazySequenceBase<T> > Prepend(const T& v) override { return make_shared< PrependedLazySequence<T> >( this->Clone(), v ); }
-    SharedPtr< LazySequenceBase<T> > InsertAt(const T& v, size_t idx) override { return make_shared< InsertedAtLazySequence<T> >( this->Clone(), v, idx ); }
+    SharedPtr< LazySequenceBase<T> > Append(const T& v) override { return MakeShared< AppendedLazySequence<T> >( this->Clone(), v ); }
+    SharedPtr< LazySequenceBase<T> > Prepend(const T& v) override { return MakeShared< PrependedLazySequence<T> >( this->Clone(), v ); }
+    SharedPtr< LazySequenceBase<T> > InsertAt(const T& v, size_t idx) override { return MakeShared< InsertedAtLazySequence<T> >( this->Clone(), v, idx ); }
 
 private:
     void ensureFound(size_t idx) {
@@ -415,7 +384,6 @@ private:
     DynamicArray<size_t> matches;
 };
 
-
 template <class T, class U>
 class ZipLazySequence : public LazySequenceBase< std::pair<T,U> > {
 public:
@@ -423,7 +391,7 @@ public:
     ZipLazySequence(const ZipLazySequence& other) : a(other.a), b(other.b) {}
 
     SharedPtr< LazySequenceBase< std::pair<T,U> > > Clone() const override {
-        return make_shared< ZipLazySequence<T,U> >(*this);
+        return MakeShared< ZipLazySequence<T,U> >(*this);
     }
 
     std::pair<T,U> Get(size_t index) override { return std::make_pair(a->Get(index), b->Get(index)); }
@@ -443,20 +411,19 @@ public:
     }
 
     SharedPtr< LazySequenceBase< std::pair<T,U> > > Append(const std::pair<T,U>& v) override {
-        return ::make_shared< AppendedLazySequence< std::pair<T,U> > >( this->Clone(), v );
+        return MakeShared< AppendedLazySequence< std::pair<T,U> > >( this->Clone(), v );
     }
     SharedPtr< LazySequenceBase< std::pair<T,U> > > Prepend(const std::pair<T,U>& v) override {
-        return ::make_shared< PrependedLazySequence< std::pair<T,U> > >( this->Clone(), v );
+        return MakeShared< PrependedLazySequence< std::pair<T,U> > >( this->Clone(), v );
     }
     SharedPtr< LazySequenceBase< std::pair<T,U> > > InsertAt(const std::pair<T,U>& v, size_t idx) override {
-        return ::make_shared< InsertedAtLazySequence< std::pair<T,U> > >( this->Clone(), v, idx );
+        return MakeShared< InsertedAtLazySequence< std::pair<T,U> > >( this->Clone(), v, idx );
     }
 
 private:
     SharedPtr< LazySequenceBase<T> > a;
     SharedPtr< LazySequenceBase<U> > b;
 };
-
 
 template <class T>
 SharedPtr< LazySequenceBase<T> > Concat(const SharedPtr< LazySequenceBase<T> >& a,
@@ -468,35 +435,28 @@ SharedPtr< LazySequenceBase<T> > Concat(const SharedPtr< LazySequenceBase<T> >& 
     Cardinal la = a->GetLength();
     Cardinal lb = b->GetLength();
 
-
-    if (!la.IsOmega() && !lb.IsOmega()) {
+    if (la.IsFinite() && lb.IsFinite()) {
         size_t na = la.GetValue();
         size_t nb = lb.GetValue();
 
         T* buf = new T[na + nb];
         for (size_t i = 0; i < na; ++i)
-            buf[i] = a->Get(i);
+            buf[i] = a->Get(static_cast<int>(i));
         for (size_t j = 0; j < nb; ++j)
-            buf[na + j] = b->Get(j);
+            buf[na + j] = b->Get(static_cast<int>(j));
 
         SharedPtr< LazySequenceBase<T> > out =
-            ::make_shared< CoreLazySequence<T> >(buf, (int)(na + nb));
+            MakeShared< CoreLazySequence<T> >(buf, static_cast<int>(na + nb));
         delete [] buf;
         return out;
     }
-
 
     if (la.IsOmega()) {
         return a;
     }
 
-
     size_t na = la.GetValue();
-    if (na == 0) {
-
-        return b;
-    }
-
+    if (na == 0) return b;
 
     CoreLazySequence<T>* coreB = dynamic_cast< CoreLazySequence<T>* >(b.get());
     T (*rawRuleB)(Sequence<T>*) = nullptr;
@@ -507,31 +467,31 @@ SharedPtr< LazySequenceBase<T> > Concat(const SharedPtr< LazySequenceBase<T> >& 
         wrapperRuleB = coreB->GetWrapperRule();
     }
 
+    
     if (!rawRuleB && !wrapperRuleB) {
+       
         T* buf = new T[na];
         for (size_t i = 0; i < na; ++i)
-            buf[i] = a->Get(i);
+            buf[i] = a->Get(static_cast<int>(i));
 
-        auto out = ::make_shared< CoreLazySequence<T> >(buf, (int)na);
+        auto out = MakeShared< CoreLazySequence<T> >(buf, static_cast<int>(na));
         delete [] buf;
-        out->AddChild(b);
+        
+        out->AddChild(b); 
         return out;
     }
 
     SharedPtr< ArraySequence<T> > bSeed = coreB->GetMaterialisedArray();
+    
     size_t nbSeed = bSeed ? bSeed->GetLength() : 0;
 
     T* buf = new T[na + nbSeed];
-
-
     for (size_t i = 0; i < na; ++i)
-        buf[i] = a->Get(i);
-
-
+        buf[i] = a->Get(static_cast<int>(i));
     for (size_t j = 0; j < nbSeed; ++j)
-        buf[na + j] = bSeed->Get(j);
+        buf[na + j] = bSeed->Get(static_cast<int>(j));
 
-    auto out = ::make_shared< CoreLazySequence<T> >(buf, (int)(na + nbSeed));
+    auto out = MakeShared< CoreLazySequence<T> >(buf, static_cast<int>(na + nbSeed));
     delete [] buf;
 
     if (rawRuleB) {
@@ -543,36 +503,25 @@ SharedPtr< LazySequenceBase<T> > Concat(const SharedPtr< LazySequenceBase<T> >& 
     return out;
 }
 
-
-template <class T, class R>
-R Reduce(const SharedPtr< LazySequenceBase<T> >& seq, R (*f)(R, T), R init) {
-    Cardinal len = seq->GetLength();
-    if (len.IsOmega()) throw std::runtime_error("Reduce on infinite sequence");
-    size_t n = len.GetValue();
-    R acc = init;
-    for (size_t i = 0; i < n; ++i) acc = f(acc, seq->Get(i));
-    return acc;
-}
-
 template <class T>
 class LazySequence {
 public:
-    LazySequence() { root = make_shared< CoreLazySequence<T> >(); generator.reset(nullptr); }
-    LazySequence(T* items, int count) { root = make_shared< CoreLazySequence<T> >(items, count); generator.reset(nullptr); }
-    LazySequence(Sequence<T>* seq) { root = make_shared< CoreLazySequence<T> >(seq); generator.reset(nullptr); }
+    LazySequence() { root = MakeShared< CoreLazySequence<T> >(); generator.reset(nullptr); }
+    LazySequence(T* items, int count) { root = MakeShared< CoreLazySequence<T> >(items, count); generator.reset(nullptr); }
+    LazySequence(Sequence<T>* seq) { root = MakeShared< CoreLazySequence<T> >(seq); generator.reset(nullptr); }
     LazySequence(T (*ruleFunc)(Sequence<T>*), Sequence<T>* seedSeq) {
-        auto core = make_shared< CoreLazySequence<T> >(ruleFunc, seedSeq);
+        auto core = MakeShared< CoreLazySequence<T> >(ruleFunc, seedSeq);
         root = core;
-        generator = make_unique< Generator<T> >( core->GetMaterialisedArray(), ruleFunc );
+        generator = MakeUnique< Generator<T> >( core->GetMaterialisedArray(), ruleFunc );
     }
     LazySequence(std::function<T(Sequence<T>*)> ruleFunc, Sequence<T>* seedSeq) {
-        auto core = make_shared< CoreLazySequence<T> >(ruleFunc, seedSeq);
+        auto core = MakeShared< CoreLazySequence<T> >(ruleFunc, seedSeq);
         root = core;
-        generator = make_unique< Generator<T> >( core->GetMaterialisedArray(), ruleFunc );
+        generator = MakeUnique< Generator<T> >( core->GetMaterialisedArray(), ruleFunc );
     }
     LazySequence(const LazySequence<T>& other) {
         root = other.root;
-        if (other.generator) generator = make_unique< Generator<T> >(*other.generator);
+        if (other.generator) generator = MakeUnique< Generator<T> >(*other.generator);
         else generator.reset(nullptr);
     }
 
@@ -580,29 +529,26 @@ public:
         CoreLazySequence<T>* core = dynamic_cast< CoreLazySequence<T>* >(root.get());
         if (!core) throw std::runtime_error("SetGenerator: root is not core");
         core->SetGenerator(ruleFunc);
-        generator = make_unique< Generator<T> >( core->GetMaterialisedArray(), ruleFunc );
+        generator = MakeUnique< Generator<T> >( core->GetMaterialisedArray(), ruleFunc );
     }
     void SetGenerator(std::function<T(Sequence<T>*)> ruleFunc) {
         CoreLazySequence<T>* core = dynamic_cast< CoreLazySequence<T>* >(root.get());
         if (!core) throw std::runtime_error("SetGenerator: root is not core");
         core->SetGenerator(ruleFunc);
-        generator = make_unique< Generator<T> >( core->GetMaterialisedArray(), ruleFunc );
+        generator = MakeUnique< Generator<T> >( core->GetMaterialisedArray(), ruleFunc );
     }
 
     T Get(size_t index) {
-        // если индекс уже материализован — просто берём из root
         if (index < root->GetMaterializedCount()) {
             return root->Get(index);
         }
 
-        // дальше нужны новые элементы -> нужен генератор
         if (!generator) {
             throw std::out_of_range(
                 "LazySequence::Get: index is not materialized and no generator is attached"
             );
         }
 
-        // генерируем, пока не появится нужный индекс
         while (root->GetMaterializedCount() <= index) {
             generator->GetNext();
         }
@@ -628,7 +574,6 @@ public:
         return Get(n - 1);
     }
 
-
     SharedPtr< LazySequenceBase<T> > GetRoot() const { return root; }
     Cardinal GetLength() const { return root->GetLength(); }
     size_t GetMaterializedCount() const { return root->GetMaterializedCount(); }
@@ -637,39 +582,32 @@ public:
     void PrependValue(const T& v) { root = root->Prepend(v); }
     void InsertAtValue(const T& v, size_t idx) { root = root->InsertAt(v, idx); }
 
-// вставьте в класс LazySequence<T>
-void ConcatWith(const SharedPtr< LazySequenceBase<T> >& other) {
-        // сначала строим новый корень на уровне LazySequenceBase<T>
+    void ConcatWith(const SharedPtr< LazySequenceBase<T> >& other) {
         SharedPtr< LazySequenceBase<T> > newRoot = Concat(root, other);
-
-        // по умолчанию генератора нет
         generator.reset(nullptr);
 
-      
         CoreLazySequence<T>* newCore = dynamic_cast< CoreLazySequence<T>* >(newRoot.get());
         if (newCore) {
             T (*rawRule)(Sequence<T>*) = newCore->GetRawRule();
             std::function<T(Sequence<T>*)> wrapperRule = newCore->GetWrapperRule();
 
             if (rawRule) {
-                generator = ::make_unique< Generator<T> >(
+                generator = MakeUnique< Generator<T> >(
                     newCore->GetMaterialisedArray(), rawRule
                 );
             } else if (wrapperRule) {
-                generator = ::make_unique< Generator<T> >(
+                generator = MakeUnique< Generator<T> >(
                     newCore->GetMaterialisedArray(), wrapperRule
                 );
             }
         }
-
-
         root = newRoot;
     }
 
     template <class R>
-SharedPtr< LazySequenceBase<R> > Map(R (*f)(T)) {
-    return root->template Map<R>(f);
-}
+    SharedPtr< LazySequenceBase<R> > Map(R (*f)(T)) {
+        return root->template Map<R>(f);
+    }
     SharedPtr< LazySequenceBase<T> > Where(bool (*pred)(T)) { return root->Where(pred); }
 
     bool HasGenerator() const {

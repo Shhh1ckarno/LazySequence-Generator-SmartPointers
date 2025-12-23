@@ -9,7 +9,8 @@ enum class CardinalType { FINITE = 0, OMEGA = 1 };
 class Cardinal {
 public:
     Cardinal() noexcept : type(CardinalType::FINITE), value(0) {}
-    explicit Cardinal(std::size_t v) noexcept : type(CardinalType::FINITE), value(v) {}
+    Cardinal(std::size_t v) noexcept : type(CardinalType::FINITE), value(v) {}
+
     static Cardinal Omega() noexcept { return Cardinal(CardinalType::OMEGA); }
 
     bool IsOmega() const noexcept { return type == CardinalType::OMEGA; }

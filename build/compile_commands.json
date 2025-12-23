@@ -1,0 +1,8 @@
+[
+{
+  "directory": "/Users/danilaaleksandrov/Documents/SmartPointer/build",
+  "command": "/usr/bin/c++   -g -std=gnu++17 -arch arm64 -o CMakeFiles/Laba2.dir/main.cpp.o -c /Users/danilaaleksandrov/Documents/SmartPointer/main.cpp",
+  "file": "/Users/danilaaleksandrov/Documents/SmartPointer/main.cpp",
+  "output": "CMakeFiles/Laba2.dir/main.cpp.o"
+}
+]

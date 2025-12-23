@@ -15,7 +15,7 @@ using ObjectCount = long long;
 void test_unique_ptr() {
     cout << "=== Testing UniquePtr ===\n";
 
-    UniquePtr<MutableArraySequence<int>> seq(::make_unique<MutableArraySequence<int>>());
+    UniquePtr<MutableArraySequence<int>> seq(MakeUnique<MutableArraySequence<int>>());
     seq->Append(10);
     seq->Append(20);
     cout << "First: " << seq->GetFirst() << ", Last: " << seq->GetLast() << "\n";
@@ -29,7 +29,7 @@ void test_unique_ptr() {
 void test_shared_ptr() {
     cout << "=== Testing SharedPtr ===\n";
 
-    SharedPtr<MutableArraySequence<int>> sp_seq(::make_shared<MutableArraySequence<int>>());
+    SharedPtr<MutableArraySequence<int>> sp_seq(MakeShared<MutableArraySequence<int>>());
     sp_seq->Append(100);
     sp_seq->Append(200);
 
@@ -62,7 +62,7 @@ void benchmark_object_lifecycle(ObjectCount n, ofstream& out) {
     start = high_resolution_clock::now();
     for (ObjectCount i = 0; i < n; ++i) {
 
-        UniquePtr<int> up_seq(::make_unique<int>((int)i));
+        UniquePtr<int> up_seq(MakeUnique<int>((int)i));
     } 
     end = high_resolution_clock::now();
     auto unique_time = duration_cast<milliseconds>(end - start).count();
@@ -71,7 +71,7 @@ void benchmark_object_lifecycle(ObjectCount n, ofstream& out) {
     start = high_resolution_clock::now();
     for (ObjectCount i = 0; i < n; ++i) {
 
-        SharedPtr<int> sp_seq = ::make_shared<int>((int)i);
+        SharedPtr<int> sp_seq = MakeShared<int>((int)i);
     } 
     end = high_resolution_clock::now();
     auto shared_time = duration_cast<milliseconds>(end - start).count();

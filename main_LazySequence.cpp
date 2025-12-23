@@ -1,17 +1,18 @@
-// main.cpp — fixed
 #include <iostream>
 #include <string>
 #include <vector>
 #include <limits>
-#include <memory>
+#include <memory> 
 #include <functional>
 #include <algorithm>
+#include <utility>
 
 #include "LazySequence.h"
 #include "ArraySequence.h"
 #include "SmartPointer.h"
+#include "Cardinal.h"
 
-// Safety limits
+
 static const size_t MAX_INDEX = 10000;
 static const size_t MAX_PRINT = 50;
 
@@ -20,25 +21,59 @@ using std::cout;
 using std::endl;
 using std::string;
 
-// Example generator functions for int (expect Sequence<int>* and dynamic_cast to ArraySequence<int>*)
+
 int FibRule(Sequence<int>* seq) {
     ArraySequence<int>* arr = dynamic_cast<ArraySequence<int>*>(seq);
     if (!arr) return 1;
-    size_t n = arr->GetLength();
+    size_t n = arr->GetLength(); 
     if (n == 0) return 1;
     if (n == 1) return 1;
-    int a = arr->Get(n - 1);
-    int b = arr->Get(n - 2);
+    int a = arr->Get(static_cast<int>(n - 1));
+    int b = arr->Get(static_cast<int>(n - 2));
+    if (std::numeric_limits<int>::max() - a < b) {
+        throw std::runtime_error("Fibonacci sequence overflow");
+    }
     return a + b;
 }
+
+
 
 int NatRule(Sequence<int>* seq) {
     ArraySequence<int>* arr = dynamic_cast<ArraySequence<int>*>(seq);
     if (!arr) return 0;
     size_t n = arr->GetLength();
     if (n == 0) return 0;
-    return arr->Get(n - 1) + 1;
+    return arr->Get(static_cast<int>(n - 1)) + 1;
 }
+
+
+
+
+
+
+
+template <class T, class R>
+R Reduce(const SharedPtr< LazySequenceBase<T> >& seq, std::function<R(R, T)> reducer, R initial) {
+    Cardinal len = seq->GetLength();
+    
+    
+    if (len.IsOmega()) {
+        throw std::runtime_error("Cannot reduce an infinite (Omega) sequence.");
+    }
+    
+    R accumulator = initial;
+    size_t n = len.GetValue();
+    
+    for (size_t i = 0; i < n; ++i) {
+        accumulator = reducer(accumulator, seq->Get(i));
+    }
+    
+    return accumulator;
+}
+
+
+
+
 
 int main() {
     std::ios::sync_with_stdio(false);
@@ -122,17 +157,16 @@ int main() {
                     for (int i = 0; i < k; ++i) seed[i] = (int)read_int();
                 }
 
-                // Create exactly one LazySequence and then set generator on it.
                 if (k > 0) {
-                    seqs.emplace_back(seed, k); // constructor copies seed into core's materialised array
+                    seqs.emplace_back(seed, k); 
                 } else {
-                    seqs.emplace_back(); // empty sequence
+                    seqs.emplace_back(); 
                 }
-
-                // Now set generator on last created sequence
                 if (g == 1) {
+                    // Используем указатель на функцию
                     seqs.back().SetGenerator(FibRule);
                 } else {
+                    // Используем указатель на функцию
                     seqs.back().SetGenerator(NatRule);
                 }
 
@@ -190,10 +224,7 @@ int main() {
                     continue;
                 }
 
-                // Берём корень второй последовательности
                 SharedPtr< LazySequenceBase<int> > otherRoot = seqs[b].GetRoot();
-
-                // Конкатим: seqs[a] = seqs[a] ++ seqs[b]
                 seqs[a].ConcatWith(otherRoot);
 
                 cout << "Concat done: seq[" << a << "] now contains seq[" << b
@@ -206,8 +237,10 @@ int main() {
                 if (id < 0 || (size_t)id >= seqs.size()) { cout << "Invalid id\n"; continue; }
                 cout << "Mapping example: x -> x*2\n";
                 auto root = seqs[id].GetRoot();
-                // call template Map on dependent type via 'template'
-                auto mapped = root->template Map<double>([](int x)->double { return x * 2.0; });
+                // Map принимает указатель на функцию R(*)(T), используем не-захватывающую лямбду
+                double (*map_func)(int) = [](int x)->double { return x * 2.0; };
+                auto mapped = root->template Map<double>(map_func);
+                
                 cout << "How many elements to show (max " << MAX_PRINT << ")? ";
                 int n = (int)read_int();
                 n = std::min<int>(n, (int)MAX_PRINT);
@@ -249,7 +282,10 @@ int main() {
                 if (id < 0 || (size_t)id >= seqs.size()) { cout << "Invalid id\n"; continue; }
                 cout << "Predicate: keep even numbers (x%2==0)\n";
                 auto root = seqs[id].GetRoot();
-                auto filtered = root->Where([](int x)->bool { return (x % 2) == 0; });
+                // Where принимает указатель на функцию bool(*)(T), используем не-захватывающую лямбду
+                bool (*filter_func)(int) = [](int x)->bool { return (x % 2) == 0; };
+                auto filtered = root->Where(filter_func);
+                
                 cout << "How many to show (max " << MAX_PRINT << ")? ";
                 int n = (int)read_int();
                 n = std::min<int>(n, (int)MAX_PRINT);
@@ -269,6 +305,7 @@ int main() {
                 if (id < 0 || (size_t)id >= seqs.size()) { cout << "Invalid id\n"; continue; }
                 auto root = seqs[id].GetRoot();
                 try {
+                    // Reduce использует std::function, так что можно использовать захватывающие лямбды
                     int sum = Reduce<int,int>(root, [](int acc, int v)->int { return acc + v; }, 0);
                     cout << "Sum of elements = " << sum << "\n";
                 } catch (const std::exception& e) {
@@ -294,7 +331,8 @@ int main() {
                 for (size_t i = 0; i < seqs.size(); ++i) {
                     Cardinal ln = seqs[i].GetLength();
                     cout << "id=" << i << " materialized=" << seqs[i].GetMaterializedCount()
-                         << " length=" << (ln.IsOmega() ? string("Omega") : std::to_string(ln.GetValue())) << "\n";
+                         << " length=" << (ln.IsOmega() ? string("Omega (Infinite)") : std::to_string(ln.GetValue())) 
+                         << (seqs[i].HasGenerator() ? " (Generator)" : " (Finite)") << "\n";
                 }
             }
             else {

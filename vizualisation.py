@@ -5,7 +5,7 @@ import pandas as pd
 df = pd.read_csv("results.csv")
 
 
-plt.figure(figsize=(14, 8))
+plt.figure(figsize=(12, 6),dpi=150)
 
 
 plt.plot(df["size"], df["raw"], label="Raw pointer", marker='o')

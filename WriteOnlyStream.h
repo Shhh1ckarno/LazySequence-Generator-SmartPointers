@@ -1,100 +1,96 @@
 #pragma once
 
-#include <cstddef>
-#include <utility>
-#include <new>
-#include <typeinfo>
-#include <cassert>
-#include <iostream>
-#include <fstream>
+#include <string>
 #include <functional>
 #include <stdexcept>
-#include <optional>
-#include <string>
+#include <fstream>
+#include <sstream>
+#include <iostream>
 
-#include "ArraySequence.h"
-#include "LazySequence.h"
-#include "Cardinal.h"
-#include "SmartPointer.h"
+#include "DynamicArray.h" 
+#include "SmartPointer.h" 
+
+
+class WriteError : public std::runtime_error {
+public:
+    WriteError(const std::string& msg) : std::runtime_error("WriteError: " + msg) {}
+};
+
+template <class T>
+using Serializer = std::function<std::string(const T&)>;
+
 
 template <class T>
 class WriteOnlyStream {
-public:
-    // Конструктор — запись в существующую Sequence (ожидается ArraySequence<T>).
-    explicit WriteOnlyStream(Sequence<T>* seq)
-        : seqTarget(seq), outStream(nullptr), ownedOutStream(nullptr), serializer(nullptr)
-    {
-        if (seqTarget) {
-            Cardinal len = seqTarget->GetLength();
-            if (len.IsFinite()) pos = len.GetValue();
-            else pos = 0;
-        } else {
-            pos = 0;
-        }
-    }
-
-    // Конструктор — запись в существующий std::ostream (не владеем им).
-    WriteOnlyStream(std::ostream* out, std::function<std::string(const T&)> serializer_)
-        : seqTarget(nullptr), outStream(out), ownedOutStream(nullptr), serializer(serializer_), pos(0)
-    {
-        if (!outStream) throw std::invalid_argument("WriteOnlyStream: null out stream");
-        if (!serializer) throw std::invalid_argument("WriteOnlyStream: null serializer");
-    }
-
-    // Конструктор — записывать в файл (владеем открытым ofstream).
-    WriteOnlyStream(const std::string& filename, std::function<std::string(const T&)> serializer_)
-        : seqTarget(nullptr), outStream(nullptr),
-          ownedOutStream(new std::ofstream(filename, std::ios::out | std::ios::binary)),
-          serializer(serializer_), pos(0)
-    {
-        if (!ownedOutStream || !static_cast<std::ofstream*>(ownedOutStream.get())->is_open())
-            throw std::runtime_error("WriteOnlyStream: failed to open file");
-        outStream = ownedOutStream.get();
-        if (!serializer) throw std::invalid_argument("WriteOnlyStream: null serializer");
-    }
-
-    // Запись возвращает позицию следующей записи (т.е. количество записанных элементов после операции)
-    size_t Write(const T& v) {
-        if (seqTarget) {
-            ArraySequence<T>* arr = dynamic_cast< ArraySequence<T>* >(seqTarget);
-            if (!arr) throw std::runtime_error("WriteOnlyStream: write target must be ArraySequence");
-            arr->Append(v);
-            ++pos;
-            return pos;
-        }
-        if (outStream) {
-            if (!serializer) throw std::runtime_error("WriteOnlyStream: no serializer provided");
-            std::string s = serializer(v);
-            (*outStream) << s;
-            // записываем перевод строки для удобства текстового формата
-            (*outStream) << '\n';
-            if (!(*outStream)) throw std::runtime_error("WriteOnlyStream: write to stream failed");
-            ++pos;
-            return pos;
-        }
-        throw std::runtime_error("WriteOnlyStream: no write target available");
-    }
-
-    size_t GetPosition() const { return pos; }
-
-    void Open() {
-        // Ничего не делаем для non-owning потоков/sequence.
-        // Для файлов — уже открыт в конструкторе.
-    }
-
-    void Close() {
-        if (outStream) outStream->flush();
-        // ownedOutStream (ofstream) будет закрыт при уничтожении unique_ptr
-    }
-
-    ~WriteOnlyStream() {
-        try { Close(); } catch (...) {}
-    }
-
 private:
-    Sequence<T>* seqTarget;                                  // не владеем Sequence
-    std::ostream* outStream;                                 // не владеем поток, если nullptr — смотрим ownedOutStream
-    std::unique_ptr<std::ostream> ownedOutStream;            // владеем (обычно ofstream при записи в файл)
-    std::function<std::string(const T&)> serializer;         // обязателен для записи в поток
-    size_t pos;                                              // позиция (сколько элементов записано)
+    struct IStreamImpl {
+        virtual ~IStreamImpl() = default;
+        virtual int Write(const T& value) = 0; 
+        virtual int GetPosition() const = 0; 
+        virtual void Reset() = 0; 
+    };
+
+    class ArrayImpl : public IStreamImpl {
+        DynamicArray<T>* array_ptr; 
+    public:
+        ArrayImpl(DynamicArray<T>* arr) : array_ptr(arr) {
+            if (!array_ptr) throw std::invalid_argument("WriteOnlyStream: DynamicArray is null");
+        }
+        
+        int Write(const T& value) override {
+            array_ptr->Append(value);
+            return array_ptr->GetSize(); 
+        }
+        
+        int GetPosition() const override {
+            return array_ptr->GetSize();
+        }
+        
+        void Reset() override {
+            array_ptr->Resize(0); 
+        }
+    };
+
+    class IoStreamImpl : public IStreamImpl {
+        std::ostream* stream;
+        UniquePtr<std::ostream> ownedStream;
+        Serializer<T> serializer;
+        int pos; 
+        
+    public:
+        IoStreamImpl(std::ostream* strm, Serializer<T> ser) 
+            : stream(strm), serializer(ser), pos(0) {
+            if (!stream) throw std::invalid_argument("Stream is null");
+        }
+
+        int Write(const T& value) override {
+            std::string serialized = serializer(value);
+            (*stream) << serialized << "\n";
+            if (stream->fail()) {
+                throw WriteError("Failed to write data to the underlying stream.");
+            }
+            pos++;
+            return pos;
+        }
+
+        int GetPosition() const override { return pos; }
+        void Reset() override { stream->clear(); pos = 0; }
+    };
+
+    UniquePtr<IStreamImpl> impl; 
+    bool isOpen;
+
+public:
+
+    explicit WriteOnlyStream(DynamicArray<T>* arr) 
+        : impl(new ArrayImpl(arr)), isOpen(true) {}
+
+    WriteOnlyStream(std::ostream* stream, Serializer<T> ser)
+        : impl(new IoStreamImpl(stream, ser)), isOpen(true) {}
+
+
+    int Write(const T& value) {
+        if (!isOpen) throw std::logic_error("Stream is closed");
+        return impl->Write(value);
+    }
 };
